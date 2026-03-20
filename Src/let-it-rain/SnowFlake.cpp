@@ -132,6 +132,40 @@ void SnowFlake::UpdatePosition(const float deltaSeconds, double clockTime)
 		ReSpawn();
 	}
 
+	// Check if the flake entered a visible window — deposit snow on the window's top edge
+	{
+		const int px = static_cast<int>(Pos.x);
+		const int py = static_cast<int>(Pos.y);
+		const size_t maskIdx = static_cast<size_t>(px) + static_cast<size_t>(py) * pDisplayData->Width;
+		if (px >= 0 && px < pDisplayData->Width && py >= 0 && py < pDisplayData->Height &&
+			maskIdx < pDisplayData->WindowMask.size() && pDisplayData->WindowMask[maskIdx] != 0)
+		{
+			// Find which window and deposit a snow pixel just above its top edge
+			const int screenX = px + pDisplayData->SceneRect.left;
+			const int screenY = py + pDisplayData->SceneRect.top;
+			for (const auto& wnd : pDisplayData->WindowRects)
+			{
+				if (screenX >= wnd.left && screenX < wnd.right &&
+					screenY >= wnd.top && screenY < wnd.bottom)
+				{
+					const int settleY = wnd.top - pDisplayData->SceneRect.top - 1;
+					if (settleY >= 0 && settleY < pDisplayData->Height &&
+						pDisplayData->ScenePixels[px + settleY * pDisplayData->Width] == 0)
+					{
+						pDisplayData->ScenePixels[px + settleY * pDisplayData->Width] = 1;
+						if (settleY < pDisplayData->MaxSnowHeight)
+						{
+							pDisplayData->MaxSnowHeight = settleY;
+						}
+					}
+					break;
+				}
+			}
+			ReSpawn();
+			return;
+		}
+	}
+
 	// If any of our neighboring pixels are filled, settle here
 	const int x = Pos.x;
 	const int y = Pos.y;
@@ -381,13 +415,19 @@ void SnowFlake::DrawStarSnowflake(ID2D1RenderTarget* rt, D2D1_POINT_2F center, f
 
 void SnowFlake::DrawSettledSnow(ID2D1DeviceContext* dc, const DisplayData* pDispData)
 {
-	for (int y = pDispData->Height - 1; y >= pDispData->MaxSnowHeight; --y)
+	// Clamp MaxSnowHeight to valid range to prevent out-of-bounds access
+	const int safeMaxSnowHeight = (std::max)(0, pDispData->MaxSnowHeight);
+	const size_t totalPixels = pDispData->ScenePixels.size();
+
+	for (int y = pDispData->Height - 1; y >= safeMaxSnowHeight; --y)
 	{
 		int startX = -1; // Start of the run of SNOW_COLOR pixels
 
 		for (int x = 0; x < pDispData->Width; ++x)
 		{
-			if (pDispData->ScenePixels[x + y * pDispData->Width] == 1)
+			const size_t idx = static_cast<size_t>(x) + static_cast<size_t>(y) * pDispData->Width;
+			if (idx >= totalPixels) continue;
+			if (pDispData->ScenePixels[idx] == 1)
 			{
 				if (startX == -1) // New run starts
 				{
@@ -395,7 +435,8 @@ void SnowFlake::DrawSettledSnow(ID2D1DeviceContext* dc, const DisplayData* pDisp
 				}
 
 				// If we reach the end of the row or the next pixel is not SNOW_COLOR
-				if (x == pDispData->Width - 1 || pDispData->ScenePixels[(x + 1) + y * pDispData->Width] != 1)
+				const size_t nextIdx = static_cast<size_t>(x + 1) + static_cast<size_t>(y) * pDispData->Width;
+				if (x == pDispData->Width - 1 || nextIdx >= totalPixels || pDispData->ScenePixels[nextIdx] != 1)
 				{
 					const int normXStart = startX + pDispData->SceneRect.left;
 					const int normXEnd = x + pDispData->SceneRect.left;
@@ -426,39 +467,79 @@ void SnowFlake::DrawSettledSnow(ID2D1DeviceContext* dc, const DisplayData* pDisp
 bool SnowFlake::CanSnowFlowInto(const int x, const int y, const DisplayData* pDispData)
 {
 	if (x < 0 || x >= pDispData->Width || y < 0 || y >= pDispData->Height) return false; // Out-of-bounds
-	const uint8_t pixel = pDispData->ScenePixels[x + y * pDispData->Width];
-	return pixel == 0; // AIR_COLOR
+	const size_t idx = static_cast<size_t>(x) + static_cast<size_t>(y) * pDispData->Width;
+	if (idx >= pDispData->ScenePixels.size()) return false;
+	if (pDispData->ScenePixels[idx] != 0) return false; // Already occupied by snow
+	if (idx < pDispData->WindowMask.size() && pDispData->WindowMask[idx] != 0) return false;
+	return true;
 }
 
 bool SnowFlake::IsSceneryPixelSet(const int x, const int y) const
 {
 	if (x < 0 || x >= pDisplayData->Width || y < 0 || y >= pDisplayData->Height) return false; // Out-of-bounds
-	const uint8_t pixel = pDisplayData->ScenePixels[x + y * pDisplayData->Width];
-	return pixel == 1; // SNOW_COLOR
+	const size_t idx = static_cast<size_t>(x) + static_cast<size_t>(y) * pDisplayData->Width;
+	if (idx >= pDisplayData->ScenePixels.size()) return false;
+	return pDisplayData->ScenePixels[idx] == 1; // SNOW_COLOR
 }
 
 void SnowFlake::SettleSnow(DisplayData* pDispData)
 {
+	// Burst mode: process all columns at higher flow rate when windows just changed
+	const bool burstMode = pDispData->FullSettleFramesRemaining > 0;
+	if (burstMode)
+	{
+		pDispData->FullSettleFramesRemaining--;
+	}
+
+	// In normal mode, process only a vertical strip (1/4 of width) to amortize cost.
+	int startX, endX;
+	if (burstMode)
+	{
+		startX = 0;
+		endX = pDispData->Width;
+	}
+	else
+	{
+		constexpr int NUM_STRIPS = 4;
+		const int stripWidth = (pDispData->Width + NUM_STRIPS - 1) / NUM_STRIPS;
+		startX = pDispData->SettleColumnOffset * stripWidth;
+		endX = (std::min)(startX + stripWidth, pDispData->Width);
+		pDispData->SettleColumnOffset = (pDispData->SettleColumnOffset + 1) % NUM_STRIPS;
+	}
+
+	// Higher flow rate during burst mode so snow falls quickly after window moves
+	const int flowThreshold = burstMode ? 8 : SNOW_FLOW_RATE;
+
+	// Clamp MaxSnowHeight and validate array before processing
+	const int safeMaxSnowHeight = (std::max)(0, pDispData->MaxSnowHeight);
+	const size_t totalPixels = pDispData->ScenePixels.size();
+	if (totalPixels == 0) return;
+
 	// Settled snow physics
 	// Iterate from bottom-up, to avoid updating falling pixels multiple times per-frame, which would cause them to "teleport"
-	for (int y = pDispData->Height - 1; y >= pDispData->MaxSnowHeight; --y)
+	for (int y = pDispData->Height - 1; y >= safeMaxSnowHeight; --y)
 	{
-		for (int x = 0; x < pDispData->Width; ++x)
+		for (int x = startX; x < endX; ++x)
 		{
-			const uint8_t pixel = pDispData->ScenePixels[x + y * pDispData->Width];
+			const size_t srcIdx = static_cast<size_t>(x) + static_cast<size_t>(y) * pDispData->Width;
+			if (srcIdx >= totalPixels) continue;
+			const uint8_t pixel = pDispData->ScenePixels[srcIdx];
 			if (pixel != 1) continue;
-			if (RandomGenerator::GetInstance().GenerateInt(0, 10) > SNOW_FLOW_RATE) continue;
 
 			if (CanSnowFlowInto(x, y + 1, pDispData))
 			{
-				// Flow downwards
+				// Free-falling snow uses a high flow rate (70%) so it falls fast
+				// but with enough variation to avoid a visible lockstep line
+				if (RandomGenerator::GetInstance().GenerateInt(0, 10) > 7) continue;
 				pDispData->ScenePixels[x + (y + 1) * pDispData->Width] = 1;
 				pDispData->ScenePixels[x + y * pDispData->Width] = 0;
 			}
 			else
 			{
+				// Diagonal/sideways spreading uses random rate to look natural
+				if (RandomGenerator::GetInstance().GenerateInt(0, 10) > flowThreshold) continue;
+
 				// Try to flow down and left/right
-				// Randomly try either left or right first, so we're less biased
 				const int firstDirection = RandomGenerator::GetInstance().GenerateInt(0, 100) < 50 ? -1 : 1;
 				const int secondDirection = -firstDirection;
 

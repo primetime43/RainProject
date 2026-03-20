@@ -1,5 +1,6 @@
 #include "DisplayData.h"
 #include "FastNoiseLite.h"
+#include <algorithm>
 #include <memory>
 
 DisplayData::DisplayData(ID2D1DeviceContext * dc) : DC(dc)
@@ -48,6 +49,8 @@ void DisplayData::SetSceneBounds(const RECT sceneRect, const float scaleFactor)
 	{
 		ScenePixels.clear();
 		ScenePixels.shrink_to_fit();
+		WindowMask.clear();
+		WindowMask.shrink_to_fit();
 	}
 
 	//wchar_t buffer[100];
@@ -70,6 +73,35 @@ void DisplayData::SetSceneBounds(const RECT sceneRect, const float scaleFactor)
 		ScenePixels.resize(Height * Width);
 		// std::vector::resize zero-initializes POD types like uint8_t
 		MaxSnowHeight = Height - 2;
+	}
+
+	// Ensure WindowMask matches ScenePixels dimensions
+	if (WindowMask.size() != static_cast<size_t>(Height) * Width)
+	{
+		WindowMask.assign(static_cast<size_t>(Height) * Width, 0);
+	}
+}
+
+void DisplayData::RebuildWindowMask()
+{
+	if (WindowMask.size() != static_cast<size_t>(Height) * Width) return;
+
+	std::fill(WindowMask.begin(), WindowMask.end(), static_cast<uint8_t>(0));
+
+	for (const auto& wnd : WindowRects)
+	{
+		// Convert from SceneRect coords to pixel-grid coords (0-based)
+		int left = (std::max)(static_cast<int>(wnd.left - SceneRect.left), 0);
+		int right = (std::min)(static_cast<int>(wnd.right - SceneRect.left), Width);
+		int top = (std::max)(static_cast<int>(wnd.top - SceneRect.top), 0);
+		int bottom = (std::min)(static_cast<int>(wnd.bottom - SceneRect.top), Height);
+
+		for (int y = top; y < bottom; ++y)
+		{
+			std::fill(WindowMask.data() + (left + y * Width),
+			          WindowMask.data() + (right + y * Width),
+			          static_cast<uint8_t>(1));
+		}
 	}
 }
 

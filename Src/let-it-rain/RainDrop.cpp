@@ -23,6 +23,7 @@ RainDrop::RainDrop(RainDrop&& other) noexcept
 	Vel = other.Vel;
 	Radius = other.Radius;
 	DropTrailLength = other.DropTrailLength;
+	CollisionFloorY = other.CollisionFloorY;
 	TouchedGround = other.TouchedGround;
 	IsDead = other.IsDead;
 	CurrentFrameCountForSplatter = other.CurrentFrameCountForSplatter;
@@ -46,6 +47,7 @@ RainDrop& RainDrop::operator=(RainDrop&& other) noexcept
 		Vel = other.Vel;
 		Radius = other.Radius;
 		DropTrailLength = other.DropTrailLength;
+		CollisionFloorY = other.CollisionFloorY;
 		TouchedGround = other.TouchedGround;
 		IsDead = other.IsDead;
 		CurrentFrameCountForSplatter = other.CurrentFrameCountForSplatter;
@@ -95,6 +97,9 @@ void RainDrop::Initialize()
 
 	// Initialize length of the rain drop trail
 	DropTrailLength = RandomGenerator::GetInstance().GenerateInt(30, 100) * pDisplayData->ScaleFactor;
+
+	// Default collision floor is the bottom of the scene (taskbar)
+	CollisionFloorY = static_cast<float>(pDisplayData->SceneRect.bottom);
 }
 
 RainDrop::~RainDrop()
@@ -122,14 +127,29 @@ void RainDrop::UpdatePosition(const float deltaSeconds)
 
 	if (!TouchedGround)
 	{
-		if (Pos.y + Radius >= pDisplayData->SceneRect.bottom)
+		// Find the highest collision surface: check all visible window top edges,
+		// then fall back to the scene bottom (taskbar).
+		float landingY = static_cast<float>(pDisplayData->SceneRect.bottom);
+		for (const auto& wndRect : pDisplayData->WindowRects)
+		{
+			if (Pos.x >= wndRect.left && Pos.x <= wndRect.right)
+			{
+				const float wndTop = static_cast<float>(wndRect.top);
+				if (wndTop < landingY)
+				{
+					landingY = wndTop;
+				}
+			}
+		}
+
+		if (Pos.y + Radius >= landingY)
 		{
 			TouchedGround = true;
-			Pos.y = static_cast<float>(pDisplayData->SceneRect.bottom);
+			Pos.y = landingY;
+			CollisionFloorY = landingY;
 
 			if (MathUtil::IsPointInRect(pDisplayData->SceneRect, Pos))
 			{
-				// if the rain touched ground inside bounds, create splatter.
 				CreateSplatters();
 			}
 			else
@@ -160,7 +180,7 @@ void RainDrop::CreateSplatters()
 		const Vector2 velSplatter(SPLATTER_STARTING_VELOCITY * std::cos(angleBounceRadians) * pDisplayData->ScaleFactor,
 	                          -SPLATTER_STARTING_VELOCITY * std::sin(angleBounceRadians) * pDisplayData->ScaleFactor);
 
-		Splatters.emplace_back(pDisplayData, Pos, velSplatter);
+		Splatters.emplace_back(pDisplayData, Pos, velSplatter, CollisionFloorY);
 	}
 }
 

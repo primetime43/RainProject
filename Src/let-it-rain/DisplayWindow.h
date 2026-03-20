@@ -74,6 +74,7 @@ private:
 	// For animation
 	double CurrentTime = -1.0;
 	double Accumulator = 0.0;
+	double LastWindowEnumTime = 0.0;
 
 	// Session / device state
 	bool IsSessionLocked = false;
@@ -100,6 +101,7 @@ private:
 	void HandleTaskBarChange() const;
 	void FindSceneRect2(RECT& sceneRect, float& scaleFactor) const;
 	void FindSceneRect(RECT& sceneRect, float& scaleFactor) const;
+	void UpdateWindowRects();
 
 	static void InitNotifyIcon(HWND hWnd);
 	static void RemoveNotifyIcon(HWND hWnd);

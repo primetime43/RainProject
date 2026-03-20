@@ -4,8 +4,8 @@
 
 #include <d2d1.h>
 
-Splatter::Splatter(DisplayData* pDispData, const Vector2 pos, const Vector2 vel) :
-	pDisplayData(pDispData), Pos(pos), Vel(vel)
+Splatter::Splatter(DisplayData* pDispData, const Vector2 pos, const Vector2 vel, const float floorY) :
+	pDisplayData(pDispData), Pos(pos), Vel(vel), CollisionFloorY(floorY)
 {
 	// Create splatters with radius ranging from 1.0 to 2.0 pixels
 	Radius = (RandomGenerator::GetInstance().GenerateInt(15, 25) / 10.0f) * pDispData->ScaleFactor;
@@ -29,10 +29,10 @@ void Splatter::UpdatePosition(const float deltaSeconds)
 	{
 		Vel.x = -Vel.x;
 	}
-	// Check for bouncing against bottom border
-	if (Pos.y + Radius > pDisplayData->SceneRect.bottom)
+	// Check for bouncing against bottom border (or window surface)
+	if (Pos.y + Radius > CollisionFloorY)
 	{
-		Pos.y = pDisplayData->SceneRect.bottom - Radius; // Keep the ellipse within bounds
+		Pos.y = CollisionFloorY - Radius; // Keep the ellipse within bounds
 		Vel.y = -Vel.y * BOUNCE_DAMPING; // Bounce with damping
 		SplatterBounceCount++;
 	}

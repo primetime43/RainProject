@@ -44,6 +44,7 @@ private:
 	float Radius;
 
 	float DropTrailLength;
+	float CollisionFloorY = 0;
 
 	bool TouchedGround = false;
 	bool IsDead = false;

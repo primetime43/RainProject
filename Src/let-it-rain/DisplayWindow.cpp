@@ -6,7 +6,9 @@
 #include <sstream>
 #include <memory>
 
+#include <dwmapi.h>
 #pragma comment(lib, "wtsapi32.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 #include "CPUUsageTracker.h"
 #include "Global.h"
@@ -44,6 +46,102 @@ enum TIMERS
 	DELAY_TIMER = 1947,
 	INTERVAL_TIMER = 1948  // fallback poll for auto-hide taskbar slide-in/out
 };
+
+// Data passed to the EnumWindows callback for window-collision enumeration
+struct WindowEnumData
+{
+	HWND ownWindow;
+	RECT monitorRect;
+	RECT sceneRect;
+	float scaleFactor;
+	std::vector<RECT>* results;
+};
+
+static BOOL CALLBACK CollisionWindowEnumProc(HWND hwnd, LPARAM lParam)
+{
+	auto* data = reinterpret_cast<WindowEnumData*>(lParam);
+
+	// Skip our own overlay window
+	if (hwnd == data->ownWindow) return TRUE;
+
+	// Skip invisible or minimized windows
+	if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return TRUE;
+
+	// Skip cloaked windows (hidden UWP/Store apps that IsWindowVisible still reports as visible)
+	DWORD cloaked = 0;
+	DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+	if (cloaked) return TRUE;
+
+	// Skip maximized windows (their top edge is at the screen top, no room for particles)
+	if (IsZoomed(hwnd)) return TRUE;
+
+	// Skip desktop and shell windows
+	if (hwnd == GetDesktopWindow() || hwnd == GetShellWindow()) return TRUE;
+
+	// Skip taskbar windows
+	wchar_t className[64];
+	GetClassName(hwnd, className, 64);
+	if (wcscmp(className, L"Shell_TrayWnd") == 0 ||
+		wcscmp(className, L"Shell_SecondaryTrayWnd") == 0 ||
+		wcscmp(className, L"Progman") == 0 ||
+		wcscmp(className, L"WorkerW") == 0)
+		return TRUE;
+
+	// Skip windows without a title (phantom/helper windows that aren't real app windows)
+	if (GetWindowTextLength(hwnd) == 0) return TRUE;
+
+	// Skip known system window classes that aren't real app windows
+	if (wcscmp(className, L"ApplicationFrameWindow") == 0 ||
+		wcscmp(className, L"Windows.UI.Core.CoreWindow") == 0 ||
+		wcscmp(className, L"ForegroundStaging") == 0 ||
+		wcscmp(className, L"XamlExplorerHostIslandWindow") == 0 ||
+		wcscmp(className, L"TopLevelWindowForSwitch") == 0)
+		return TRUE;
+
+	// Skip click-through transparent windows (overlays like ours)
+	const LONG exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+	if (exStyle & WS_EX_TRANSPARENT) return TRUE;
+
+	// Skip windows with WS_EX_NOACTIVATE (often overlays/helper windows)
+	if (exStyle & WS_EX_NOACTIVATE) return TRUE;
+
+	// Only include windows on the same monitor
+	const HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+	MONITORINFO mi = {sizeof(mi)};
+	GetMonitorInfo(hMon, &mi);
+	if (mi.rcMonitor.left != data->monitorRect.left ||
+		mi.rcMonitor.top != data->monitorRect.top ||
+		mi.rcMonitor.right != data->monitorRect.right ||
+		mi.rcMonitor.bottom != data->monitorRect.bottom)
+		return TRUE;
+
+	RECT wndRect;
+	GetWindowRect(hwnd, &wndRect);
+
+	// Normalize to monitor-relative coordinates (same space as SceneRect)
+	wndRect.left -= data->monitorRect.left;
+	wndRect.right -= data->monitorRect.left;
+	wndRect.top -= data->monitorRect.top;
+	wndRect.bottom -= data->monitorRect.top;
+
+	// Clip to scene rect
+	wndRect.left = (std::max)(wndRect.left, data->sceneRect.left);
+	wndRect.right = (std::min)(wndRect.right, data->sceneRect.right);
+	wndRect.top = (std::max)(wndRect.top, data->sceneRect.top);
+	wndRect.bottom = (std::min)(wndRect.bottom, data->sceneRect.bottom);
+
+	// Skip zero-size or very small windows
+	if (wndRect.right - wndRect.left < 50 || wndRect.bottom - wndRect.top < 30)
+		return TRUE;
+
+	// Skip windows whose top edge is too close to the scene top (no room for particles to fall)
+	const int margin = static_cast<int>(50.0f * data->scaleFactor);
+	if (wndRect.top < data->sceneRect.top + margin)
+		return TRUE;
+
+	data->results->push_back(wndRect);
+	return TRUE;
+}
 
 HINSTANCE DisplayWindow::AppInstance = nullptr;
 OptionsDialog* DisplayWindow::pOptionsDlg;
@@ -312,12 +410,19 @@ void DisplayWindow::Animate()
 
 	Accumulator += frameTime;
 
-	if (Accumulator > 1) 
+	if (Accumulator > 1)
 	{
 		// If there are large gaps in animation due to screen stuck
 		// If Accumulator value is not decreased, large number of
 		// Updates will be called in while loop
 		Accumulator = dt;
+	}
+
+	// Periodically enumerate visible windows for particle collision (every 1 second)
+	if (CurrentTime - LastWindowEnumTime > 1.0)
+	{
+		UpdateWindowRects();
+		LastWindowEnumTime = CurrentTime;
 	}
 
 	while (Accumulator >= dt)
@@ -331,6 +436,12 @@ void DisplayWindow::Animate()
 			UpdateSnowFlakes();
 		}
 		Accumulator -= dt;
+	}
+
+	// Settle snow once per frame (outside the physics loop for performance)
+	if (GeneralSettings.PartType == SNOW)
+	{
+		SnowFlake::SettleSnow(pDisplaySpecificData.get());
 	}
 
 	try
@@ -549,6 +660,44 @@ void DisplayWindow::HandleTaskBarChange() const
 		//std::wstring logMessage = oss.str();
 		//OutputDebugStringW(logMessage.c_str());
 	}
+}
+
+void DisplayWindow::UpdateWindowRects()
+{
+	if (!pDisplaySpecificData) return;
+
+	std::vector<RECT> newRects;
+	WindowEnumData data;
+	data.ownWindow = WindowHandle;
+	data.monitorRect = MonitorDat.MonitorRect;
+	data.sceneRect = pDisplaySpecificData->SceneRect;
+	data.scaleFactor = pDisplaySpecificData->ScaleFactor;
+	data.results = &newRects;
+
+	EnumWindows(CollisionWindowEnumProc, reinterpret_cast<LPARAM>(&data));
+
+	// Detect if window rects changed — trigger burst settle mode so snow falls quickly
+	const auto& oldRects = pDisplaySpecificData->WindowRects;
+	bool changed = oldRects.size() != newRects.size();
+	if (!changed)
+	{
+		for (size_t i = 0; i < oldRects.size(); ++i)
+		{
+			if (oldRects[i].left != newRects[i].left || oldRects[i].top != newRects[i].top ||
+				oldRects[i].right != newRects[i].right || oldRects[i].bottom != newRects[i].bottom)
+			{
+				changed = true;
+				break;
+			}
+		}
+	}
+	if (changed)
+	{
+		pDisplaySpecificData->FullSettleFramesRemaining = 30;
+	}
+
+	pDisplaySpecificData->WindowRects = std::move(newRects);
+	pDisplaySpecificData->RebuildWindowMask();
 }
 
 void DisplayWindow::FindSceneRect(RECT& sceneRect, float& scaleFactor) const
@@ -849,7 +998,7 @@ void DisplayWindow::UpdateSnowFlakes()
 	{
 		flake.UpdatePosition(0.01f, CurrentTime);
 	}
-	SnowFlake::SettleSnow(pDisplaySpecificData.get());
+	// SettleSnow is now called once per frame in Animate(), not per physics tick
 }
 
 void DisplayWindow::SetInstanceToHwnd(const HWND hWnd, const LPARAM lParam)
