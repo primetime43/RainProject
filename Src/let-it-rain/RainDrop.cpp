@@ -121,6 +121,23 @@ void RainDrop::UpdatePosition(const float deltaSeconds)
 {
 	if (IsDead) return;
 
+	// Cursor repulsion — push particles away from the mouse
+	if (pDisplayData->CursorInteractionEnabled)
+	{
+		const float dx = Pos.x - pDisplayData->CursorX;
+		const float dy = Pos.y - pDisplayData->CursorY;
+		const float distSq = dx * dx + dy * dy;
+		constexpr float REPULSION_RADIUS = 120.0f;
+		constexpr float REPULSION_STRENGTH = 2000.0f;
+		if (distSq > 0.1f && distSq < REPULSION_RADIUS * REPULSION_RADIUS)
+		{
+			const float dist = std::sqrt(distSq);
+			const float force = REPULSION_STRENGTH * (1.0f - dist / REPULSION_RADIUS);
+			Pos.x += (dx / dist) * force * deltaSeconds;
+			Pos.y += (dy / dist) * force * deltaSeconds;
+		}
+	}
+
 	// Update the position of the raindrop
 	Pos.x += Vel.x * deltaSeconds;
 	Pos.y += Vel.y * deltaSeconds;

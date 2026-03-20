@@ -7,7 +7,7 @@
 class Splatter
 {
 public:
-	Splatter(DisplayData* pDispData, Vector2 pos, Vector2 vel);
+	Splatter(DisplayData* pDispData, Vector2 pos, Vector2 vel, float floorY);
 	~Splatter();
 
 	// Default move/copy are fine (no owning heap resources)
@@ -31,6 +31,7 @@ private:
 	Vector2 Pos;
 	Vector2 Vel;
 	float Radius;
+	float CollisionFloorY;
 
 	int SplatterBounceCount = 0;
 };

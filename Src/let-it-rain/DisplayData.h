@@ -24,6 +24,11 @@ public:
 	RECT SceneRect = { 0, 0, 100, 100 };
 	RECT SceneRectNorm = { 0, 0, 100, 100 }; // normalized to left top as 0,0
 
+	// Cursor position in SceneRect coordinate space for particle repulsion
+	float CursorX = -1000.0f;
+	float CursorY = -1000.0f;
+	bool CursorInteractionEnabled = true;
+
 	// Visible window rects for particle collision (in SceneRect coordinate space)
 	std::vector<RECT> WindowRects;
 

@@ -14,7 +14,8 @@ OptionsDialog::OptionsDialog(const HINSTANCE hInstance,
                              const COLORREF particleColor,
                              const ParticleType partType,
                              const bool startWithWindows,
-                             const bool allowHide)
+                             const bool allowHide,
+                             const bool cursorInteraction)
 	: hInstance(hInstance),
 	  hDialog(nullptr),
 	  MaxParticles(maxParticles),
@@ -22,7 +23,8 @@ OptionsDialog::OptionsDialog(const HINSTANCE hInstance,
 	  ParticleColor(particleColor),
 	  PartType(partType),
 	  StartWithWindows(startWithWindows),
-	  AllowHide(allowHide)
+	  AllowHide(allowHide),
+	  CursorInteraction(cursorInteraction)
 {
 	pThis = this;
 }
@@ -87,6 +89,28 @@ LRESULT CALLBACK OptionsDialog::DialogProc(const HWND hWnd, const UINT message, 
 			// Initialize allow hide checkbox
 			SendMessage(GetDlgItem(hWnd, IDC_CHECK_ALLOW_HIDE), BM_SETCHECK,
 				pThis->AllowHide ? BST_CHECKED : BST_UNCHECKED, 0);
+
+			// Create cursor interaction checkbox dynamically (right of "Hide behind windows")
+			{
+				// Shrink the "Hide behind windows" checkbox so it doesn't overlap
+				HWND hHideCheck = GetDlgItem(hWnd, IDC_CHECK_ALLOW_HIDE);
+				SetWindowPos(hHideCheck, nullptr, 0, 0, 140, 14,
+					SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+
+				RECT rcHide;
+				GetWindowRect(hHideCheck, &rcHide);
+				POINT pt = { rcHide.left, rcHide.top };
+				ScreenToClient(hWnd, &pt);
+
+				HWND hCheck = CreateWindow(L"Button", L"Cursor interaction",
+					WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | BS_AUTOCHECKBOX | WS_TABSTOP,
+					pt.x + 160, pt.y, 130, 14, hWnd,
+					reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_CHECK_CURSOR_INTERACTION)),
+					pThis->hInstance, nullptr);
+				SendMessage(hCheck, WM_SETFONT, SendMessage(hWnd, WM_GETFONT, 0, 0), TRUE);
+				SendMessage(hCheck, BM_SETCHECK,
+					pThis->CursorInteraction ? BST_CHECKED : BST_UNCHECKED, 0);
+			}
 
 			// Github icon button
 			HICON hGitHubIcon = (HICON)LoadImage(pThis->hInstance, MAKEINTRESOURCE(IDI_GITHUB_ICON), IMAGE_ICON, 24, 24, LR_DEFAULTCOLOR);
@@ -174,6 +198,15 @@ LRESULT CALLBACK OptionsDialog::DialogProc(const HWND hWnd, const UINT message, 
 			for (CallBackWindow* subscriber : subscribers)
 			{
 				subscriber->UpdateAllowHide(pThis->AllowHide);
+			}
+		}
+		else if (controlId == IDC_CHECK_CURSOR_INTERACTION && HIWORD(wParam) == BN_CLICKED)
+		{
+			const LRESULT checkState = SendMessage(GetDlgItem(hWnd, IDC_CHECK_CURSOR_INTERACTION), BM_GETCHECK, 0, 0);
+			pThis->CursorInteraction = (checkState == BST_CHECKED);
+			for (CallBackWindow* subscriber : subscribers)
+			{
+				subscriber->UpdateCursorInteraction(pThis->CursorInteraction);
 			}
 		}
 		return TRUE;

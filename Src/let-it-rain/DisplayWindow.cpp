@@ -185,13 +185,15 @@ HRESULT DisplayWindow::Initialize(const HINSTANCE hInstance, const MonitorData& 
 	{
 		pOptionsDlg = new OptionsDialog(AppInstance, GeneralSettings.MaxParticles, GeneralSettings.WindSpeed,
 		                                GeneralSettings.ParticleColor, GeneralSettings.PartType,
-		                                GeneralSettings.StartWithWindows, GeneralSettings.AllowHide);
+		                                GeneralSettings.StartWithWindows, GeneralSettings.AllowHide,
+		                                GeneralSettings.CursorInteraction);
 		pOptionsDlg->Create();
 	}
 
 	InitDirect2D(window);
 	pDisplaySpecificData = std::make_unique<DisplayData>(Dc.Get());
 	pDisplaySpecificData->SetRainColor(GeneralSettings.ParticleColor);
+	pDisplaySpecificData->CursorInteractionEnabled = GeneralSettings.CursorInteraction;
 	HandleWindowBoundsChange(window, false);
 
 	// Apply the AllowHide setting from saved configuration
@@ -244,6 +246,15 @@ void DisplayWindow::UpdateAllowHide(const bool allowHide)
 			SetWindowPos(WindowHandle, HWND_TOPMOST, 0, 0, 0, 0,
 			             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 		}
+	}
+}
+
+void DisplayWindow::UpdateCursorInteraction(const bool enabled)
+{
+	GeneralSettings.CursorInteraction = enabled;
+	if (pDisplaySpecificData)
+	{
+		pDisplaySpecificData->CursorInteractionEnabled = enabled;
 	}
 }
 
@@ -418,6 +429,17 @@ void DisplayWindow::Animate()
 		Accumulator = dt;
 	}
 
+	// Update cursor position for particle repulsion (in SceneRect coordinates)
+	{
+		POINT cursorPos;
+		if (GetCursorPos(&cursorPos))
+		{
+			// Convert screen coords to monitor-relative (SceneRect space)
+			pDisplaySpecificData->CursorX = static_cast<float>(cursorPos.x - MonitorDat.MonitorRect.left);
+			pDisplaySpecificData->CursorY = static_cast<float>(cursorPos.y - MonitorDat.MonitorRect.top);
+		}
+	}
+
 	// Periodically enumerate visible windows for particle collision (every 1 second)
 	if (CurrentTime - LastWindowEnumTime > 1.0)
 	{
@@ -442,6 +464,10 @@ void DisplayWindow::Animate()
 	if (GeneralSettings.PartType == SNOW)
 	{
 		SnowFlake::SettleSnow(pDisplaySpecificData.get());
+		if (pDisplaySpecificData->CursorInteractionEnabled)
+		{
+			SnowFlake::CursorDisturbSnow(pDisplaySpecificData.get());
+		}
 	}
 
 	try

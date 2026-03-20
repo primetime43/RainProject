@@ -21,6 +21,7 @@ public:
 
 	void UpdatePosition(float deltaSeconds, double clockTime);
 	static void SettleSnow(DisplayData* pDispData);
+	static void CursorDisturbSnow(DisplayData* pDispData);
 	void Draw(ID2D1DeviceContext* dc, const D2D1::Matrix3x2F& baseTransform) const;
 	static void DrawSettledSnow(ID2D1DeviceContext* dc, const DisplayData* pDispData);
 

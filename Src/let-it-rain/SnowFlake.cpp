@@ -113,6 +113,23 @@ void SnowFlake::UpdatePosition(const float deltaSeconds, double clockTime)
 		Vel.setMag(MAX_SPEED);
 	}
 
+	// Cursor repulsion — push snowflakes away from the mouse
+	if (pDisplayData->CursorInteractionEnabled)
+	{
+		const float dx = Pos.x - (pDisplayData->CursorX - pDisplayData->SceneRect.left);
+		const float dy = Pos.y - (pDisplayData->CursorY - pDisplayData->SceneRect.top);
+		const float distSq = dx * dx + dy * dy;
+		constexpr float REPULSION_RADIUS = 120.0f;
+		constexpr float REPULSION_STRENGTH = 1200.0f;
+		if (distSq > 0.1f && distSq < REPULSION_RADIUS * REPULSION_RADIUS)
+		{
+			const float dist = std::sqrt(distSq);
+			const float force = REPULSION_STRENGTH * (1.0f - dist / REPULSION_RADIUS);
+			Vel.x += (dx / dist) * force * deltaSeconds;
+			Vel.y += (dy / dist) * force * deltaSeconds;
+		}
+	}
+
 	// Update rotation
 	Rotation += RotationSpeed * deltaSeconds;
 
@@ -459,6 +476,44 @@ void SnowFlake::DrawSettledSnow(ID2D1DeviceContext* dc, const DisplayData* pDisp
 			else
 			{
 				startX = -1; // No more consecutive pixels in this row
+			}
+		}
+	}
+}
+
+void SnowFlake::CursorDisturbSnow(DisplayData* pDispData)
+{
+	// Convert cursor from SceneRect coords to pixel-grid coords (0-based)
+	const int cx = static_cast<int>(pDispData->CursorX - pDispData->SceneRect.left);
+	const int cy = static_cast<int>(pDispData->CursorY - pDispData->SceneRect.top);
+
+	constexpr int RADIUS = 40;
+	constexpr int RADIUS_SQ = RADIUS * RADIUS;
+
+	// Early out if cursor is nowhere near the snow region
+	if (cx < -RADIUS || cx >= pDispData->Width + RADIUS ||
+		cy < pDispData->MaxSnowHeight - RADIUS || cy >= pDispData->Height + RADIUS)
+		return;
+
+	const int startY = (std::max)(0, cy - RADIUS);
+	const int endY = (std::min)(pDispData->Height, cy + RADIUS);
+	const int startX = (std::max)(0, cx - RADIUS);
+	const int endX = (std::min)(pDispData->Width, cx + RADIUS);
+
+	for (int y = startY; y < endY; ++y)
+	{
+		for (int x = startX; x < endX; ++x)
+		{
+			const int dx = x - cx;
+			const int dy = y - cy;
+			if (dx * dx + dy * dy > RADIUS_SQ) continue;
+
+			const size_t idx = static_cast<size_t>(x) + static_cast<size_t>(y) * pDispData->Width;
+			if (idx >= pDispData->ScenePixels.size()) continue;
+			if (pDispData->ScenePixels[idx] == 1)
+			{
+				// Clear the snow pixel
+				pDispData->ScenePixels[idx] = 0;
 			}
 		}
 	}

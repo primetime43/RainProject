@@ -78,6 +78,9 @@ void SettingsManager::ReadSettings(Setting& setting) const
 	setting.AllowHide = GetPrivateProfileInt(L"Settings", L"AllowHide", defaultSetting.AllowHide,
 	                                         iniFilePath.c_str()) != 0;
 
+	setting.CursorInteraction = GetPrivateProfileInt(L"Settings", L"CursorInteraction", defaultSetting.CursorInteraction,
+	                                                 iniFilePath.c_str()) != 0;
+
 	// Update missing values in INI file
 	WriteSettings(setting);
 }
@@ -94,6 +97,8 @@ void SettingsManager::WriteSettings(const Setting& setting) const
 	WritePrivateProfileString(L"Settings", L"ParticleType", std::to_wstring(setting.PartType).c_str(),
 		iniFilePath.c_str());
 	WritePrivateProfileString(L"Settings", L"AllowHide", std::to_wstring(setting.AllowHide).c_str(),
+		iniFilePath.c_str());
+	WritePrivateProfileString(L"Settings", L"CursorInteraction", std::to_wstring(setting.CursorInteraction).c_str(),
 		iniFilePath.c_str());
 }
 

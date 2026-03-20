@@ -46,6 +46,7 @@ public:
 	void UpdateParticleColor(COLORREF color) override;
 	void UpdateParticleType(ParticleType partType) override;
 	void UpdateAllowHide(bool allowHide) override;
+	void UpdateCursorInteraction(bool enabled) override;
 
 	~DisplayWindow() override;
 
